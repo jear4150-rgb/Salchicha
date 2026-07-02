@@ -1,0 +1,15 @@
+# Backend
+backend/.env
+backend/.venv/
+backend/uploads/
+backend/tickets.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# General
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
