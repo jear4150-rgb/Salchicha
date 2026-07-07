@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: salchicha
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
