@@ -616,3 +616,20 @@ def _domicilio_to_dict(d: Domicilio) -> dict:
         "valor_comision": d.valor_comision,
         "created_at": d.created_at.isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Frontend estático (build de producción), servido por este mismo backend
+# ---------------------------------------------------------------------------
+
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "static")
+
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        candidate = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
