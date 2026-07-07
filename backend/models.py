@@ -31,6 +31,15 @@ class Repartidor(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class Zona(Base):
+    __tablename__ = "zonas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, nullable=False)
+    valor = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class DomicilioBatch(Base):
     __tablename__ = "domicilio_batches"
 
@@ -38,6 +47,7 @@ class DomicilioBatch(Base):
     filename = Column(String, default="")
     total = Column(Integer, default=0)
     clasificados = Column(Integer, default=0)
+    total_comision = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.now)
 
     domicilios = relationship("Domicilio", back_populates="batch", cascade="all, delete-orphan")
@@ -54,6 +64,7 @@ class Domicilio(Base):
     zona_detectada = Column(String, default="")
     repartidor_id = Column(Integer, ForeignKey("repartidores.id"), nullable=True)
     confianza = Column(Float, default=0.0)
+    valor_comision = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.now)
 
     batch = relationship("DomicilioBatch", back_populates="domicilios")

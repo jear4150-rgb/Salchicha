@@ -10,6 +10,10 @@ interface Props {
 
 const SIN_ASIGNAR_KEY = 'sin-asignar'
 
+function fmt(n: number) {
+  return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 export default function DomicilioList({ domicilios, repartidores, onReassign }: Props) {
   const groups = useMemo(() => {
     const map = new Map<string, Domicilio[]>()
@@ -43,13 +47,17 @@ export default function DomicilioList({ domicilios, repartidores, onReassign }: 
         const color = repartidor?.color ?? 'slate'
         const cfg = COLOR_CONFIG[color]
         const label = repartidor?.nombre ?? 'Sin asignar'
+        const subtotal = items.reduce((sum, d) => sum + d.valor_comision, 0)
         return (
           <div key={key}>
             <div className="flex items-center gap-2 mb-2">
               <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
-              <h3 className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
+              <h3 className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex-1">
                 {label} · {items.length}
               </h3>
+              {subtotal > 0 && (
+                <span className="text-emerald-400 text-xs font-semibold">${fmt(subtotal)}</span>
+              )}
             </div>
             <div className="space-y-2">
               {items.map((d) => (
@@ -81,6 +89,9 @@ function DomicilioRow({ domicilio, repartidores, onReassign }: {
             {domicilio.cliente && <span className="text-slate-400 text-xs">{domicilio.cliente}</span>}
             {domicilio.zona_detectada && (
               <span className="text-slate-500 text-xs">· {domicilio.zona_detectada}</span>
+            )}
+            {domicilio.valor_comision > 0 && (
+              <span className="text-emerald-400 text-xs font-semibold">· ${fmt(domicilio.valor_comision)}</span>
             )}
           </div>
         </div>

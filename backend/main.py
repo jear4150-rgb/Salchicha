@@ -12,9 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from models import Domicilio, DomicilioBatch, Repartidor, Ticket, get_db, init_db
+from models import Domicilio, DomicilioBatch, Repartidor, Ticket, Zona, get_db, init_db
 from spreadsheet import detect_columns, guess_address_column, parse_spreadsheet
 
 load_dotenv()
@@ -222,6 +223,16 @@ class DomicilioUpdate(BaseModel):
     repartidor_id: int | None = None
 
 
+class ZonaIn(BaseModel):
+    nombre: str = Field(min_length=1, max_length=80)
+    valor: float = 0.0
+
+
+class ZonaUpdate(BaseModel):
+    nombre: str | None = None
+    valor: float | None = None
+
+
 def _build_repartidores_block(repartidores: list[Repartidor]) -> str:
     if not repartidores:
         return "(No hay repartidores cargados todavía. Solo indicá la zona detectada y dejá repartidor en null.)"
@@ -229,7 +240,13 @@ def _build_repartidores_block(repartidores: list[Repartidor]) -> str:
     return "\n".join(lines)
 
 
-def _classify_chunk(addresses: list[str], repartidores: list[Repartidor]) -> list[dict]:
+def _build_zonas_block(zonas: list[Zona]) -> str:
+    if not zonas:
+        return "(No hay zonas configuradas todavía. Indicá vos el barrio/zona que detectes, con texto corto.)"
+    return "\n".join(f"- {z.nombre}" for z in zonas)
+
+
+def _classify_chunk(addresses: list[str], repartidores: list[Repartidor], zonas: list[Zona]) -> list[dict]:
     nombres_validos = {r.nombre for r in repartidores}
     addresses_block = "\n".join(f"{i}: {addr}" for i, addr in enumerate(addresses))
     prompt = f"""Sos un clasificador de domicilios de reparto.
@@ -237,8 +254,11 @@ def _classify_chunk(addresses: list[str], repartidores: list[Repartidor]) -> lis
 Repartidores disponibles y las zonas que cubre cada uno:
 {_build_repartidores_block(repartidores)}
 
+Zonas configuradas (usá EXACTAMENTE uno de estos nombres cuando la dirección corresponda a alguna de ellas):
+{_build_zonas_block(zonas)}
+
 Para cada domicilio de la lista de abajo, indicá:
-1. "zona": el barrio/zona detectado en la dirección (texto corto, ej: "Palermo", "Centro").
+1. "zona": si la dirección corresponde a alguna zona configurada, usá ese nombre exacto. Si no hay zonas configuradas o ninguna corresponde, indicá el barrio/zona que detectes (texto corto, ej: "Palermo", "Centro").
 2. "repartidor": a qué repartidor le corresponde según las zonas que cubre cada uno. Usá EXACTAMENTE el nombre tal cual está listado arriba, o null si no hay repartidores cargados o ninguno cubre esa zona.
 3. "confianza": un número entre 0 y 1.
 
@@ -293,11 +313,11 @@ Devolvé SOLO un JSON array (sin markdown, sin explicaciones), un elemento por c
     return [by_idx.get(i, fallback[i]) for i in range(len(addresses))]
 
 
-def classify_addresses(addresses: list[str], repartidores: list[Repartidor]) -> list[dict]:
+def classify_addresses(addresses: list[str], repartidores: list[Repartidor], zonas: list[Zona]) -> list[dict]:
     results = []
     for start in range(0, len(addresses), DOMICILIO_CHUNK_SIZE):
         chunk = addresses[start : start + DOMICILIO_CHUNK_SIZE]
-        results.extend(_classify_chunk(chunk, repartidores))
+        results.extend(_classify_chunk(chunk, repartidores, zonas))
     return results
 
 
@@ -344,6 +364,45 @@ async def delete_repartidor(repartidor_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.get("/api/zonas")
+async def list_zonas(db: Session = Depends(get_db)):
+    zonas = db.query(Zona).order_by(Zona.nombre).all()
+    return [_zona_to_dict(z) for z in zonas]
+
+
+@app.post("/api/zonas")
+async def create_zona(payload: ZonaIn, db: Session = Depends(get_db)):
+    zona = Zona(nombre=payload.nombre.strip(), valor=payload.valor)
+    db.add(zona)
+    db.commit()
+    db.refresh(zona)
+    return _zona_to_dict(zona)
+
+
+@app.patch("/api/zonas/{zona_id}")
+async def update_zona(zona_id: int, payload: ZonaUpdate, db: Session = Depends(get_db)):
+    zona = db.query(Zona).filter(Zona.id == zona_id).first()
+    if not zona:
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
+    if payload.nombre is not None:
+        zona.nombre = payload.nombre.strip()
+    if payload.valor is not None:
+        zona.valor = payload.valor
+    db.commit()
+    db.refresh(zona)
+    return _zona_to_dict(zona)
+
+
+@app.delete("/api/zonas/{zona_id}")
+async def delete_zona(zona_id: int, db: Session = Depends(get_db)):
+    zona = db.query(Zona).filter(Zona.id == zona_id).first()
+    if not zona:
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
+    db.delete(zona)
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/domicilios/importar")
 async def importar_domicilios(file: UploadFile = File(...), db: Session = Depends(get_db)):
     data = await file.read()
@@ -378,30 +437,38 @@ async def importar_domicilios(file: UploadFile = File(...), db: Session = Depend
         raise HTTPException(status_code=422, detail="No se encontraron direcciones en la columna detectada")
 
     repartidores = db.query(Repartidor).all()
+    zonas = db.query(Zona).all()
     addresses = [row[direccion_col].strip() for row in filas_validas]
-    clasificaciones = classify_addresses(addresses, repartidores)
+    clasificaciones = classify_addresses(addresses, repartidores, zonas)
     repartidores_by_nombre = {r.nombre: r for r in repartidores}
+    valor_by_zona = {z.nombre.strip().lower(): z.valor for z in zonas}
 
     batch = DomicilioBatch(filename=filename, total=len(filas_validas), clasificados=0)
     db.add(batch)
     db.flush()
 
     clasificados = 0
+    total_comision = 0.0
     for row, clasificacion in zip(filas_validas, clasificaciones):
         repartidor = repartidores_by_nombre.get(clasificacion.get("repartidor"))
         if repartidor:
             clasificados += 1
+        zona_detectada = clasificacion.get("zona", "")
+        valor_comision = valor_by_zona.get(zona_detectada.strip().lower(), 0.0)
+        total_comision += valor_comision
         db.add(Domicilio(
             batch_id=batch.id,
             direccion=row[direccion_col].strip(),
             cliente=(row.get(cliente_col, "") if cliente_col else "").strip(),
             telefono=(row.get(telefono_col, "") if telefono_col else "").strip(),
-            zona_detectada=clasificacion.get("zona", ""),
+            zona_detectada=zona_detectada,
             repartidor_id=repartidor.id if repartidor else None,
             confianza=clasificacion.get("confianza", 0.0),
+            valor_comision=valor_comision,
         ))
 
     batch.clasificados = clasificados
+    batch.total_comision = total_comision
     db.commit()
     db.refresh(batch)
 
@@ -449,6 +516,39 @@ async def update_domicilio(domicilio_id: int, payload: DomicilioUpdate, db: Sess
     return _domicilio_to_dict(domicilio)
 
 
+@app.get("/api/domicilios/reporte")
+async def get_reporte(db: Session = Depends(get_db)):
+    rows = (
+        db.query(
+            Domicilio.repartidor_id,
+            func.count(Domicilio.id),
+            func.coalesce(func.sum(Domicilio.valor_comision), 0.0),
+        )
+        .group_by(Domicilio.repartidor_id)
+        .all()
+    )
+    repartidores_by_id = {r.id: r for r in db.query(Repartidor).all()}
+
+    resultado = []
+    for repartidor_id, cantidad, total_comision in rows:
+        repartidor = repartidores_by_id.get(repartidor_id) if repartidor_id else None
+        resultado.append({
+            "repartidor_id": repartidor_id,
+            "repartidor_nombre": repartidor.nombre if repartidor else "Sin asignar",
+            "repartidor_color": repartidor.color if repartidor else None,
+            "cantidad_domicilios": cantidad,
+            "total_comision": total_comision,
+        })
+
+    resultado.sort(key=lambda r: (r["repartidor_id"] is None, -r["total_comision"]))
+
+    return {
+        "por_repartidor": resultado,
+        "total_domicilios": sum(r["cantidad_domicilios"] for r in resultado),
+        "total_comision": sum(r["total_comision"] for r in resultado),
+    }
+
+
 @app.get("/api/domicilios/batches/{batch_id}/export")
 async def export_batch(batch_id: int, db: Session = Depends(get_db)):
     batch = db.query(DomicilioBatch).filter(DomicilioBatch.id == batch_id).first()
@@ -463,7 +563,7 @@ async def export_batch(batch_id: int, db: Session = Depends(get_db)):
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["direccion", "cliente", "telefono", "zona", "repartidor", "confianza"])
+    writer.writerow(["direccion", "cliente", "telefono", "zona", "repartidor", "confianza", "comision"])
     for d in domicilios:
         writer.writerow([
             d.direccion,
@@ -472,6 +572,7 @@ async def export_batch(batch_id: int, db: Session = Depends(get_db)):
             d.zona_detectada,
             d.repartidor.nombre if d.repartidor else "Sin asignar",
             f"{d.confianza:.2f}",
+            f"{d.valor_comision:.2f}",
         ])
 
     return Response(
@@ -485,12 +586,17 @@ def _repartidor_to_dict(r: Repartidor) -> dict:
     return {"id": r.id, "nombre": r.nombre, "color": r.color, "zonas": r.zonas}
 
 
+def _zona_to_dict(z: Zona) -> dict:
+    return {"id": z.id, "nombre": z.nombre, "valor": z.valor}
+
+
 def _batch_to_dict(b: DomicilioBatch) -> dict:
     return {
         "id": b.id,
         "filename": b.filename,
         "total": b.total,
         "clasificados": b.clasificados,
+        "total_comision": b.total_comision,
         "created_at": b.created_at.isoformat(),
     }
 
@@ -507,5 +613,6 @@ def _domicilio_to_dict(d: Domicilio) -> dict:
         "repartidor_nombre": d.repartidor.nombre if d.repartidor else None,
         "repartidor_color": d.repartidor.color if d.repartidor else None,
         "confianza": d.confianza,
+        "valor_comision": d.valor_comision,
         "created_at": d.created_at.isoformat(),
     }

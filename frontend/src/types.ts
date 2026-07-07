@@ -79,6 +79,7 @@ export interface Domicilio {
   repartidor_nombre: string | null
   repartidor_color: RepartidorColor | null
   confianza: number
+  valor_comision: number
   created_at: string
 }
 
@@ -87,12 +88,33 @@ export interface DomicilioBatch {
   filename: string
   total: number
   clasificados: number
+  total_comision: number
   created_at: string
 }
 
 export interface DomicilioImportResult {
   batch: DomicilioBatch
   domicilios: Domicilio[]
+}
+
+export interface Zona {
+  id: number
+  nombre: string
+  valor: number
+}
+
+export interface ReporteRepartidor {
+  repartidor_id: number | null
+  repartidor_nombre: string
+  repartidor_color: RepartidorColor | null
+  cantidad_domicilios: number
+  total_comision: number
+}
+
+export interface Reporte {
+  por_repartidor: ReporteRepartidor[]
+  total_domicilios: number
+  total_comision: number
 }
 
 export const COLOR_CONFIG: Record<RepartidorColor, { dot: string; bg: string; border: string; text: string; badge: string }> = {

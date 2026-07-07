@@ -1,4 +1,4 @@
-import type { Ticket, Summary, Repartidor, RepartidorColor, DomicilioBatch, DomicilioImportResult, Domicilio } from './types'
+import type { Ticket, Summary, Repartidor, RepartidorColor, DomicilioBatch, DomicilioImportResult, Domicilio, Zona, Reporte } from './types'
 
 const BASE = '/api'
 
@@ -112,4 +112,48 @@ export async function updateDomicilio(id: number, repartidorId: number | null): 
 
 export function exportBatchUrl(id: number): string {
   return `${BASE}/domicilios/batches/${id}/export`
+}
+
+export async function getReporte(): Promise<Reporte> {
+  const res = await fetch(`${BASE}/domicilios/reporte`)
+  if (!res.ok) throw new Error('Error obteniendo el reporte')
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Zonas (valor de comisión por zona)
+// ---------------------------------------------------------------------------
+
+export async function getZonas(): Promise<Zona[]> {
+  const res = await fetch(`${BASE}/zonas`)
+  if (!res.ok) throw new Error('Error obteniendo zonas')
+  return res.json()
+}
+
+export async function createZona(nombre: string, valor: number): Promise<Zona> {
+  const res = await fetch(`${BASE}/zonas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, valor }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Error creando zona' }))
+    throw new Error(err.detail || 'Error creando zona')
+  }
+  return res.json()
+}
+
+export async function updateZona(id: number, changes: Partial<Pick<Zona, 'nombre' | 'valor'>>): Promise<Zona> {
+  const res = await fetch(`${BASE}/zonas/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  })
+  if (!res.ok) throw new Error('Error actualizando zona')
+  return res.json()
+}
+
+export async function deleteZona(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/zonas/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Error eliminando zona')
 }

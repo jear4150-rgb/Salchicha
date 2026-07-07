@@ -1,28 +1,42 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Repartidor, Domicilio, DomicilioBatch } from '../types'
-import { getRepartidores, importarDomicilios, getBatches, getBatch, deleteBatch, updateDomicilio, exportBatchUrl } from '../api'
+import type { Repartidor, Domicilio, DomicilioBatch, Zona, Reporte } from '../types'
+import { getRepartidores, importarDomicilios, getBatches, getBatch, deleteBatch, updateDomicilio, exportBatchUrl, getZonas, getReporte } from '../api'
 import RepartidorManager from '../components/RepartidorManager'
+import ZonaManager from '../components/ZonaManager'
+import ReportePanel from '../components/ReportePanel'
 import SpreadsheetUpload from '../components/SpreadsheetUpload'
 import DomicilioList from '../components/DomicilioList'
 
 export default function DomiciliosPage() {
   const [repartidores, setRepartidores] = useState<Repartidor[]>([])
+  const [zonas, setZonas] = useState<Zona[]>([])
+  const [reporte, setReporte] = useState<Reporte | null>(null)
   const [batches, setBatches] = useState<DomicilioBatch[]>([])
   const [activeBatch, setActiveBatch] = useState<DomicilioBatch | null>(null)
   const [domicilios, setDomicilios] = useState<Domicilio[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const refreshReporte = useCallback(async () => {
+    try {
+      setReporte(await getReporte())
+    } catch {
+      // silently fail on background refresh
+    }
+  }, [])
+
   const refreshBase = useCallback(async () => {
     try {
-      const [r, b] = await Promise.all([getRepartidores(), getBatches()])
+      const [r, z, b] = await Promise.all([getRepartidores(), getZonas(), getBatches()])
       setRepartidores(r)
+      setZonas(z)
       setBatches(b)
       if (!activeBatch && b.length > 0) {
         const latest = await getBatch(b[0].id)
         setActiveBatch(latest.batch)
         setDomicilios(latest.domicilios)
       }
+      await refreshReporte()
     } catch {
       // silently fail on background refresh
     }
@@ -46,6 +60,7 @@ export default function DomiciliosPage() {
       setActiveBatch(result.batch)
       setDomicilios(result.domicilios)
       setBatches((prev) => [result.batch, ...prev])
+      refreshReporte()
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Error procesando la planilla')
     } finally {
@@ -76,6 +91,7 @@ export default function DomiciliosPage() {
           setDomicilios([])
         }
       }
+      refreshReporte()
     } catch {
       showError('No se pudo eliminar el lote')
     }
@@ -89,6 +105,7 @@ export default function DomiciliosPage() {
       : d))
     try {
       await updateDomicilio(domicilioId, repartidorId)
+      refreshReporte()
     } catch {
       setDomicilios(prev)
       showError('No se pudo reasignar el domicilio')
@@ -98,6 +115,10 @@ export default function DomiciliosPage() {
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       <RepartidorManager repartidores={repartidores} onChange={setRepartidores} />
+
+      <ZonaManager zonas={zonas} onChange={setZonas} />
+
+      <ReportePanel reporte={reporte} />
 
       <SpreadsheetUpload onFile={handleFile} loading={loading} />
 
@@ -135,6 +156,11 @@ export default function DomiciliosPage() {
               <p className="text-2xl font-bold text-white">
                 {activeBatch.clasificados}/{activeBatch.total} <span className="text-sm font-normal text-slate-400">asignados</span>
               </p>
+              {activeBatch.total_comision > 0 && (
+                <p className="text-emerald-400 text-sm font-semibold mt-0.5">
+                  ${activeBatch.total_comision.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} comisión
+                </p>
+              )}
             </div>
             <div className="flex gap-2 flex-shrink-0">
               <a
